@@ -199,13 +199,27 @@ async def health():
     return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
-if os.path.exists(frontend_path):
-    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_path, "assets")), name="assets")
+# Resolve frontend/dist relative to repo root (works both locally and on Render)
+_here = os.path.dirname(os.path.abspath(__file__))
+frontend_path = os.path.join(_here, "..", "frontend", "dist")
+frontend_path = os.path.normpath(frontend_path)
+
+if os.path.exists(frontend_path) and os.path.isdir(frontend_path):
+    assets_dir = os.path.join(frontend_path, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(os.path.join(frontend_path, "index.html"))
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
-        index_path = os.path.join(frontend_path, "index.html")
-        if os.path.exists(index_path):
-            return FileResponse(index_path)
-        return {"message": "Frontend not built. Run: cd frontend && npm run build"}
+        file_path = os.path.join(frontend_path, full_path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(frontend_path, "index.html"))
+else:
+    @app.get("/")
+    async def root():
+        return {"status": "Scrum AI Board API running", "docs": "/docs", "health": "/health"}

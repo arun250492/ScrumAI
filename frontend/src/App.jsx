@@ -8,6 +8,7 @@ import QAPanel from './components/QAPanel'
 import DocumentationPanel from './components/DocumentationPanel'
 import StartModal from './components/StartModal'
 import { useWebSocket } from './hooks/useWebSocket'
+import { API_BASE } from './config'
 
 const INITIAL_STATE = {
   project_name: '',
@@ -57,7 +58,7 @@ export default function App() {
   const { connected } = useWebSocket(sessionId, handleWsMessage)
 
   const handleStart = async ({ project_name, requirement, openai_api_key }) => {
-    const res = await fetch('/api/start-sprint', {
+    const res = await fetch(`${API_BASE}/api/start-sprint`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ project_name, requirement, openai_api_key })

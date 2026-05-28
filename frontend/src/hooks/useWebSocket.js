@@ -1,5 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 
+import { WS_BASE } from '../config'
+
 export function useWebSocket(sessionId, onMessage) {
   const ws = useRef(null)
   const [connected, setConnected] = useState(false)
@@ -8,9 +10,8 @@ export function useWebSocket(sessionId, onMessage) {
   const connect = useCallback(() => {
     if (!sessionId) return
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    const url = `${protocol}//${host}/ws/${sessionId}`
+    const base = WS_BASE || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+    const url = `${base}/ws/${sessionId}`
 
     ws.current = new WebSocket(url)
 
