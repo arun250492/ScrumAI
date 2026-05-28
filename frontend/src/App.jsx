@@ -8,6 +8,7 @@ import QAPanel from './components/QAPanel'
 import DocumentationPanel from './components/DocumentationPanel'
 import StartModal from './components/StartModal'
 import IntegrationPanel from './components/IntegrationPanel'
+import AgentDrawer from './components/AgentDrawer'
 import { useWebSocket } from './hooks/useWebSocket'
 import { API_BASE } from './config'
 
@@ -38,6 +39,7 @@ export default function App() {
   const [section,    setSection]     = useState('board')
   const [agentStream, setAgentStream]   = useState({ agent: '', text: '' })
   const [agentStatuses, setAgentStatuses] = useState({})
+  const [selectedAgent, setSelectedAgent] = useState(null)
 
   const onWs = useCallback((msg) => {
     if (msg.type === 'workflow_start') {
@@ -175,6 +177,7 @@ export default function App() {
             agentLogs={state.agent_logs}
             agentStatuses={agentStatuses}
             streamingAgent={agentStream.agent}
+            onAgentClick={setSelectedAgent}
           />
         </aside>
 
@@ -235,6 +238,7 @@ export default function App() {
       {/* Modals */}
       <StartModal isOpen={showModal} onStart={handleStart} />
       <IntegrationPanel isOpen={showInteg} onClose={() => setShowInteg(false)} sprintState={state} />
+      <AgentDrawer agentShort={selectedAgent} state={state} onClose={() => setSelectedAgent(null)} ArchitectureViewerComponent={ArchitectureViewer} />
     </div>
   )
 }

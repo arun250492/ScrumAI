@@ -16,7 +16,7 @@ function status(agentId, current, completed) {
   return 'idle'
 }
 
-export default function AgentRoster({ currentAgent, completedAgents = [], agentLogs = [], agentStatuses = {}, streamingAgent = '' }) {
+export default function AgentRoster({ currentAgent, completedAgents = [], agentLogs = [], agentStatuses = {}, streamingAgent = '', onAgentClick }) {
   return (
     <nav className="flex flex-col gap-0.5 py-1">
       <p className="section-label px-3 py-2">Agent Squad</p>
@@ -26,6 +26,7 @@ export default function AgentRoster({ currentAgent, completedAgents = [], agentL
         const liveMsg = agentStatuses[a.short]?.message
         const lastLog = agentLogs.filter(l => l.agent === a.short).slice(-1)[0]
         const msg = liveMsg || lastLog?.message || a.sub
+        const isClickable = s === 'done' || s === 'active' || isStream
 
         return (
           <motion.div
@@ -33,7 +34,9 @@ export default function AgentRoster({ currentAgent, completedAgents = [], agentL
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: i * 0.05 }}
-            className={`relative flex items-center gap-3 px-3 py-2.5 rounded-md mx-1 transition-all duration-200 cursor-default
+            onClick={() => isClickable && onAgentClick && onAgentClick(a.short)}
+            className={`relative flex items-center gap-3 px-3 py-2.5 rounded-md mx-1 transition-all duration-200
+              ${isClickable ? 'cursor-pointer' : 'cursor-default'}
               ${s === 'active' || isStream ? 'surface-3' : 'hover:surface-2'}`}
             style={isStream ? { boxShadow: '0 0 0 1px rgba(124,58,237,0.4)' } : s === 'active' ? { boxShadow: '0 0 0 1px rgba(16,185,129,0.3)' } : {}}
           >
@@ -64,6 +67,9 @@ export default function AgentRoster({ currentAgent, completedAgents = [], agentL
                 )}
                 {s === 'done' && !isStream && (
                   <span className="badge badge-cyan text-2xs">DONE</span>
+                )}
+                {s === 'done' && !isStream && (
+                  <span className="text-2xs text-slate-600 ml-auto">↗</span>
                 )}
               </div>
               <p className="text-2xs text-slate-500 truncate leading-tight mt-0.5">{msg}</p>
