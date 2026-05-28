@@ -16,6 +16,9 @@ load_dotenv()
 
 app = FastAPI(title="Scrum AI Board", version="1.0.0")
 
+from .integrations.router import router as integrations_router
+app.include_router(integrations_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
