@@ -9,39 +9,30 @@ from ..agents.documentation import documentation_node
 
 
 def qa_router(state: ScrumState) -> str:
-    if state.get("all_tests_passed", False):
-        return "documentation"
-    return "developer"
+    return "doc_agent" if state.get("all_tests_passed", False) else "developer"
 
 
 def create_scrum_workflow():
-    workflow = StateGraph(ScrumState)
+    wf = StateGraph(ScrumState)
 
-    workflow.add_node("product_owner", product_owner_node)
-    workflow.add_node("scrum_master_plan", scrum_master_plan_node)
-    workflow.add_node("architect", architect_node)
-    workflow.add_node("developer", developer_node)
-    workflow.add_node("qa", qa_node)
-    workflow.add_node("documentation", documentation_node)
-    workflow.add_node("scrum_master_review", scrum_master_review_node)
+    wf.add_node("product_owner", product_owner_node)
+    wf.add_node("scrum_master_plan", scrum_master_plan_node)
+    wf.add_node("architect", architect_node)
+    wf.add_node("developer", developer_node)
+    wf.add_node("qa", qa_node)
+    wf.add_node("doc_agent", documentation_node)
+    wf.add_node("scrum_master_review", scrum_master_review_node)
 
-    workflow.add_edge(START, "product_owner")
-    workflow.add_edge("product_owner", "scrum_master_plan")
-    workflow.add_edge("scrum_master_plan", "architect")
-    workflow.add_edge("architect", "developer")
-    workflow.add_edge("developer", "qa")
-    workflow.add_conditional_edges(
-        "qa",
-        qa_router,
-        {
-            "developer": "developer",
-            "documentation": "documentation"
-        }
-    )
-    workflow.add_edge("documentation", "scrum_master_review")
-    workflow.add_edge("scrum_master_review", END)
+    wf.add_edge(START, "product_owner")
+    wf.add_edge("product_owner", "scrum_master_plan")
+    wf.add_edge("scrum_master_plan", "architect")
+    wf.add_edge("architect", "developer")
+    wf.add_edge("developer", "qa")
+    wf.add_conditional_edges("qa", qa_router, {
+        "developer": "developer",
+        "doc_agent": "doc_agent"
+    })
+    wf.add_edge("doc_agent", "scrum_master_review")
+    wf.add_edge("scrum_master_review", END)
 
-    return workflow.compile()
-
-
-scrum_graph = create_scrum_workflow()
+    return wf.compile()
