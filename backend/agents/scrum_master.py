@@ -1,96 +1,75 @@
 import json
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
-from .base import get_llm, make_log
-from ..tools.scrum_tools import create_sprint, update_story_status, create_sprint_report
+from langchain_core.messages import SystemMessage, HumanMessage
+from .base import get_llm, stream_llm, parse_json, make_log, broadcast_agent_status
 from ..graph.state import ScrumState
 
-PLAN_SYSTEM_PROMPT = """You are an expert Scrum Master (SM) running a high-performing AI Scrum team.
+PLAN_SYSTEM = "You are a Scrum Master. Return ONLY valid JSON."
 
-Sprint Planning responsibilities:
-1. Review the product backlog from the Product Owner
-2. Facilitate sprint planning - select the right stories for the sprint
-3. Set a clear, achievable sprint goal
-4. Calculate sprint capacity and verify story point commitment
-5. Assign stories to team members (Architect, Developer, QA, Documentation)
-6. Ensure everyone understands their tasks
+PLAN_TEMPLATE = """Sprint {sprint} Planning for: {name}
 
-Use the create_sprint tool to formalize the sprint.
-Then use update_story_status to assign each story to the appropriate team member.
+Stories:
+{stories}
 
-Be decisive, energetic, and make sure the team is set up for success!"""
+Return JSON:
+{{
+  "sprint_goal": "clear sprint goal",
+  "assignments": [
+    {{"story_id": "US-001", "assigned_to": "Developer", "status": "TODO"}}
+  ],
+  "capacity_points": 20,
+  "kickoff_message": "motivating team kickoff message"
+}}"""
 
-REVIEW_SYSTEM_PROMPT = """You are an expert Scrum Master conducting a Sprint Review.
+REVIEW_SYSTEM = "You are a Scrum Master doing sprint review. Return ONLY valid JSON."
 
-Sprint Review responsibilities:
-1. Review all completed work from the sprint
-2. Assess QA test results and overall quality
-3. Calculate team velocity
-4. Identify blockers encountered and how they were resolved
-5. Facilitate retrospective (What went well? What to improve? Action items?)
-6. Present the sprint summary to stakeholders
+REVIEW_TEMPLATE = """Sprint {sprint} Review:
+- Stories completed: {done}/{total}
+- Tests passed: {passed}/{tests}
+- QA iterations: {qa_iter}
 
-Use the create_sprint_report tool to generate the official sprint report.
-Be thorough, data-driven, and forward-looking!"""
+Return JSON:
+{{
+  "velocity": {points},
+  "went_well": ["item1", "item2"],
+  "improve": ["item1"],
+  "action_items": ["item1"],
+  "summary": "sprint summary paragraph"
+}}"""
 
-SM_PLAN_TOOLS = [create_sprint, update_story_status]
-SM_REVIEW_TOOLS = [create_sprint_report]
 
-
-def scrum_master_plan_node(state: ScrumState) -> dict:
-    llm = get_llm(SM_PLAN_TOOLS)
+async def scrum_master_plan_node(state: ScrumState) -> dict:
+    sid = state.get("session_id", "")
     logs = list(state.get("agent_logs", []))
-    logs.append(make_log("SM", "Scrum Master", "SPRINT_PLANNING", "Initiating Sprint Planning session..."))
 
-    sprint_backlog = state.get("sprint_backlog", [])
-    stories_summary = json.dumps([{
-        "id": s["id"], "title": s["title"],
-        "priority": s["priority"], "story_points": s["story_points"]
-    } for s in sprint_backlog], indent=2)
+    await broadcast_agent_status(sid, "SM", "Scrum Master", "ACTIVE", "Running sprint planning session...")
+    logs.append(make_log("SM", "Scrum Master", "SPRINT_PLANNING", "Running sprint planning session..."))
 
+    stories = state.get("sprint_backlog", [])
+    stories_txt = json.dumps([{"id": s["id"], "title": s["title"], "points": s.get("story_points", 3),
+                               "priority": s.get("priority")} for s in stories], indent=2)
+
+    llm = get_llm("gpt-4o-mini", max_tokens=1000)
     messages = [
-        SystemMessage(content=PLAN_SYSTEM_PROMPT),
-        HumanMessage(content=f"""
-Sprint Backlog from Product Owner:
-{stories_summary}
-
-Project: {state.get('project_name', 'AI Project')}
-Sprint Number: {state.get('current_sprint', 1)}
-
-Please:
-1. Create Sprint {state.get('current_sprint', 1)} using create_sprint tool
-2. Update each story status using update_story_status tool - assign to: Architect, Developer, QA or Documentation Agent as appropriate
-3. Provide sprint kickoff message to the team
-""")
+        SystemMessage(content=PLAN_SYSTEM),
+        HumanMessage(content=PLAN_TEMPLATE.format(
+            sprint=state.get("current_sprint", 1),
+            name=state.get("project_name", "Project"),
+            stories=stories_txt
+        ))
     ]
 
-    response = llm.invoke(messages)
-    messages.append(response)
+    content = await stream_llm(llm, messages, sid, "SM")
+    data = parse_json(content)
 
-    sprint_goal = f"Deliver core features for {state.get('project_name', 'the project')}"
-
-    if hasattr(response, 'tool_calls') and response.tool_calls:
-        tool_map = {
-            "create_sprint": create_sprint,
-            "update_story_status": update_story_status
-        }
-        for tool_call in response.tool_calls:
-            tool_name = tool_call["name"]
-            if tool_name in tool_map:
-                result = tool_map[tool_name].invoke(tool_call["args"])
-                result_data = json.loads(result)
-                if tool_name == "create_sprint":
-                    sprint_goal = result_data.get("goal", sprint_goal)
-                    logs.append(make_log("SM", "Scrum Master", "CREATE_SPRINT",
-                                        f"Sprint {result_data.get('sprint_number', 1)} created with goal: {sprint_goal}",
-                                        result_data))
-                messages.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
-
-        final_response = llm.invoke(messages)
-        messages.append(final_response)
+    sprint_goal = data.get("sprint_goal", state.get("sprint_goal", "Deliver core features"))
+    kickoff = data.get("kickoff_message", "Sprint is live! Let's build something amazing.")
 
     logs.append(make_log("SM", "Scrum Master", "SPRINT_START",
-                         f"Sprint {state.get('current_sprint', 1)} started! Team is ready to execute.",
-                         {"sprint_goal": sprint_goal, "stories_count": len(sprint_backlog)}))
+                         f"🚀 {kickoff}",
+                         {"sprint_goal": sprint_goal, "capacity": data.get("capacity_points", 20)}))
+
+    await broadcast_agent_status(sid, "SM", "Scrum Master", "DONE",
+                                 f"✅ Sprint {state.get('current_sprint', 1)} kicked off")
 
     return {
         "sprint_goal": sprint_goal,
@@ -98,61 +77,51 @@ Please:
         "current_agent": "architect",
         "agent_logs": logs,
         "completed_agents": list(state.get("completed_agents", [])) + ["scrum_master_plan"],
-        "messages": messages
+        "messages": [HumanMessage(content=f"SM: Sprint {state.get('current_sprint',1)} started. Goal: {sprint_goal}")]
     }
 
 
-def scrum_master_review_node(state: ScrumState) -> dict:
-    llm = get_llm(SM_REVIEW_TOOLS)
+async def scrum_master_review_node(state: ScrumState) -> dict:
+    sid = state.get("session_id", "")
     logs = list(state.get("agent_logs", []))
-    logs.append(make_log("SM", "Scrum Master", "SPRINT_REVIEW", "Conducting Sprint Review and Retrospective..."))
+
+    await broadcast_agent_status(sid, "SM", "Scrum Master", "ACTIVE", "Conducting sprint review & retrospective...")
+    logs.append(make_log("SM", "Scrum Master", "SPRINT_REVIEW", "Conducting sprint review & retrospective..."))
 
     completed = [s for s in state.get("sprint_backlog", []) if s.get("status") == "DONE"]
     test_results = state.get("test_results", [])
     passed = sum(1 for t in test_results if t.get("status") == "PASS")
+    total_pts = sum(s.get("story_points", 0) for s in completed)
 
+    llm = get_llm("gpt-4o-mini", max_tokens=800)
     messages = [
-        SystemMessage(content=REVIEW_SYSTEM_PROMPT),
-        HumanMessage(content=f"""
-Sprint {state.get('current_sprint', 1)} Summary:
-- Sprint Goal: {state.get('sprint_goal', 'N/A')}
-- Stories Completed: {len(completed)}/{len(state.get('sprint_backlog', []))}
-- Tests Passed: {passed}/{len(test_results)}
-- QA Iterations: {state.get('qa_iterations', 1)}
-- Documentation: {'Complete' if state.get('documentation') else 'Pending'}
-
-Please use create_sprint_report to generate the official report with retrospective insights.
-""")
+        SystemMessage(content=REVIEW_SYSTEM),
+        HumanMessage(content=REVIEW_TEMPLATE.format(
+            sprint=state.get("current_sprint", 1),
+            done=len(completed), total=len(state.get("sprint_backlog", [])),
+            passed=passed, tests=len(test_results),
+            qa_iter=state.get("qa_iterations", 1),
+            points=total_pts
+        ))
     ]
 
-    response = llm.invoke(messages)
-    messages.append(response)
+    content = await stream_llm(llm, messages, sid, "SM")
+    data = parse_json(content)
 
-    sprint_notes = f"Sprint {state.get('current_sprint', 1)} completed. {len(completed)} stories done, {passed} tests passed."
-
-    if hasattr(response, 'tool_calls') and response.tool_calls:
-        for tool_call in response.tool_calls:
-            if tool_call["name"] == "create_sprint_report":
-                result = create_sprint_report.invoke(tool_call["args"])
-                result_data = json.loads(result)
-                sprint_notes = json.dumps(result_data, indent=2)
-                logs.append(make_log("SM", "Scrum Master", "SPRINT_REPORT",
-                                     "Sprint report generated successfully!", result_data))
-                messages.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
-
-        final_response = llm.invoke(messages)
-        messages.append(final_response)
-
+    summary = data.get("summary", f"Sprint {state.get('current_sprint',1)} completed with {len(completed)} stories.")
     logs.append(make_log("SM", "Scrum Master", "SPRINT_COMPLETE",
-                         f"Sprint {state.get('current_sprint', 1)} COMPLETED! Great work, team!",
-                         {"velocity": sum(s.get("story_points", 0) for s in completed)}))
+                         f"🏆 {summary}",
+                         {"velocity": data.get("velocity", total_pts), "went_well": data.get("went_well", [])}))
+
+    await broadcast_agent_status(sid, "SM", "Scrum Master", "DONE",
+                                 f"🏆 Sprint complete! Velocity: {data.get('velocity', total_pts)} pts")
 
     return {
         "sprint_status": "DONE",
-        "sprint_notes": sprint_notes,
+        "sprint_notes": json.dumps(data, indent=2),
         "workflow_complete": True,
         "current_agent": "complete",
         "agent_logs": logs,
         "completed_agents": list(state.get("completed_agents", [])) + ["scrum_master_review"],
-        "messages": messages
+        "messages": [HumanMessage(content="Sprint review complete.")]
     }

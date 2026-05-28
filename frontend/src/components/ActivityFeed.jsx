@@ -34,7 +34,7 @@ function formatTime(timestamp) {
   }
 }
 
-export default function ActivityFeed({ logs = [], currentAgent, isRunning }) {
+export default function ActivityFeed({ logs = [], currentAgent, isRunning, agentStream = {} }) {
   const bottomRef = useRef(null)
 
   useEffect(() => {
@@ -84,7 +84,29 @@ export default function ActivityFeed({ logs = [], currentAgent, isRunning }) {
           })}
         </AnimatePresence>
 
-        {isRunning && currentAgent && (
+        {/* Live token stream panel */}
+        {isRunning && agentStream.text && (
+          <motion.div
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-lg border border-neon-blue/30 bg-neon-blue/5 overflow-hidden"
+          >
+            <div className="flex items-center gap-2 px-2.5 py-1.5 bg-neon-blue/10 border-b border-neon-blue/20">
+              <div className="w-1.5 h-1.5 rounded-full bg-neon-blue animate-ping" />
+              <span className="text-[10px] font-mono font-bold text-neon-blue">
+                {agentStream.agent} · THINKING
+              </span>
+            </div>
+            <div className="p-2.5 max-h-32 overflow-y-auto">
+              <p className="text-[11px] text-slate-300 font-mono leading-relaxed whitespace-pre-wrap break-words">
+                {agentStream.text}
+                <span className="inline-block w-1.5 h-3 bg-neon-blue ml-0.5 animate-pulse align-middle" />
+              </p>
+            </div>
+          </motion.div>
+        )}
+
+        {isRunning && !agentStream.text && currentAgent && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -95,7 +117,7 @@ export default function ActivityFeed({ logs = [], currentAgent, isRunning }) {
               <span className="w-1.5 h-1.5 rounded-full bg-neon-green" />
               <span className="w-1.5 h-1.5 rounded-full bg-neon-green" />
             </div>
-            <span className="text-[11px] text-neon-green">Agent working...</span>
+            <span className="text-[11px] text-neon-green">Connecting to agent...</span>
           </motion.div>
         )}
 

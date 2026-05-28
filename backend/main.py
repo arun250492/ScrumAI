@@ -28,6 +28,16 @@ active_connections: dict[str, WebSocket] = {}
 session_states: dict[str, dict] = {}
 
 
+async def _push_to_ws(session_id: str, payload: dict):
+    """Low-level send to a connected WebSocket."""
+    ws = active_connections.get(session_id)
+    if ws:
+        try:
+            await ws.send_text(json.dumps(payload))
+        except Exception:
+            pass
+
+
 class ProjectRequest(BaseModel):
     project_name: str
     requirement: str
@@ -71,8 +81,16 @@ async def run_scrum_workflow(session_id: str, project_name: str, requirement: st
     os.environ["OPENAI_API_KEY"] = api_key
 
     from .graph.workflow import create_scrum_workflow
+    from .agents.base import register_broadcaster, unregister_broadcaster
+
+    # Register per-session broadcaster so agents can push chunks directly
+    async def session_push(payload: dict):
+        await _push_to_ws(session_id, payload)
+
+    register_broadcaster(session_id, session_push)
 
     initial_state = {
+        "session_id": session_id,
         "project_name": project_name,
         "requirement": requirement,
         "current_sprint": 1,
@@ -119,6 +137,8 @@ async def run_scrum_workflow(session_id: str, project_name: str, requirement: st
         error_state = {**session_states.get(session_id, initial_state), "error": error_msg}
         session_states[session_id] = error_state
         await broadcast_state(session_id, error_state, "workflow_error")
+    finally:
+        unregister_broadcaster(session_id)
 
 
 @app.websocket("/ws/{session_id}")

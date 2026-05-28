@@ -78,7 +78,7 @@ function getAgentStatus(agentId, currentAgent, completedAgents) {
   return 'idle'
 }
 
-export default function AgentRoster({ currentAgent, completedAgents = [], agentLogs = [] }) {
+export default function AgentRoster({ currentAgent, completedAgents = [], agentLogs = [], agentStatuses = {}, streamingAgent = '' }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2 mb-1">
@@ -89,6 +89,8 @@ export default function AgentRoster({ currentAgent, completedAgents = [], agentL
       {AGENTS.map((agent, i) => {
         const status = getAgentStatus(agent.id, currentAgent, completedAgents)
         const lastLog = agentLogs.filter(l => l.agent === agent.short).slice(-1)[0]
+        const liveStatus = agentStatuses[agent.short]
+        const isStreaming = streamingAgent === agent.short
 
         return (
           <motion.div
@@ -123,16 +125,20 @@ export default function AgentRoster({ currentAgent, completedAgents = [], agentL
                     status === 'active' ? 'text-white' : status === 'done' ? 'text-slate-300' : 'text-slate-500'
                   }`}>{agent.name}</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${
-                    status === 'active'
+                    isStreaming
+                      ? 'bg-neon-blue/20 text-neon-blue animate-pulse'
+                      : status === 'active'
                       ? 'bg-neon-green/20 text-neon-green'
                       : status === 'done'
                       ? 'bg-neon-blue/10 text-neon-blue'
                       : 'bg-slate-800 text-slate-600'
                   }`}>
-                    {status === 'active' ? '● LIVE' : status === 'done' ? '✓ DONE' : '○ IDLE'}
+                    {isStreaming ? '◈ STREAM' : status === 'active' ? '● LIVE' : status === 'done' ? '✓ DONE' : '○ IDLE'}
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-500 truncate">{lastLog?.message || agent.description}</p>
+                <p className="text-[11px] text-slate-500 truncate">
+                  {liveStatus?.message || lastLog?.message || agent.description}
+                </p>
               </div>
             </div>
           </motion.div>

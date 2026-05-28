@@ -51,6 +51,7 @@ class AgentLog(TypedDict):
 
 
 class ScrumState(TypedDict):
+    session_id: str
     project_name: str
     requirement: str
     current_sprint: int

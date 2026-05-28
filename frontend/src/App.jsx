@@ -39,19 +39,37 @@ export default function App() {
   const [scrumState, setScrumState] = useState(INITIAL_STATE)
   const [isRunning, setIsRunning] = useState(false)
   const [activeSection, setActiveSection] = useState('board')
+  const [agentStream, setAgentStream] = useState({ agent: '', text: '', role: '' })
+  const [agentStatuses, setAgentStatuses] = useState({})
 
   const handleWsMessage = useCallback((msg) => {
     if (msg.type === 'workflow_start') {
       setIsRunning(true)
+      setAgentStream({ agent: '', text: '', role: '' })
+      setAgentStatuses({})
       setScrumState(prev => ({ ...prev, ...msg.data }))
     } else if (msg.type === 'state_update' || msg.type === 'state_sync') {
       setScrumState(prev => ({ ...prev, ...msg.data }))
     } else if (msg.type === 'workflow_complete') {
       setScrumState(prev => ({ ...prev, ...msg.data }))
+      setAgentStream({ agent: '', text: '', role: '' })
       setIsRunning(false)
     } else if (msg.type === 'workflow_error') {
       setScrumState(prev => ({ ...prev, ...msg.data, error: msg.data.error }))
       setIsRunning(false)
+    } else if (msg.type === 'agent_chunk') {
+      // Live token stream from the active agent
+      setAgentStream(prev => ({
+        agent: msg.agent,
+        text: prev.agent === msg.agent ? prev.text + msg.chunk : msg.chunk,
+        role: msg.agent
+      }))
+    } else if (msg.type === 'agent_status') {
+      setAgentStatuses(prev => ({ ...prev, [msg.agent]: msg }))
+      // Clear stream when agent finishes
+      if (msg.status === 'DONE') {
+        setAgentStream(prev => prev.agent === msg.agent ? { agent: '', text: '', role: '' } : prev)
+      }
     }
   }, [])
 
@@ -151,6 +169,8 @@ export default function App() {
             currentAgent={scrumState.current_agent}
             completedAgents={scrumState.completed_agents}
             agentLogs={scrumState.agent_logs}
+            agentStatuses={agentStatuses}
+            streamingAgent={agentStream.agent}
           />
         </aside>
 
@@ -256,6 +276,7 @@ export default function App() {
             logs={scrumState.agent_logs}
             currentAgent={scrumState.current_agent}
             isRunning={isRunning}
+            agentStream={agentStream}
           />
         </aside>
       </div>

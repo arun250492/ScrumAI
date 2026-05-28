@@ -1,114 +1,79 @@
 import json
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
-from .base import get_llm, make_log
-from ..tools.scrum_tools import create_documentation
+from langchain_core.messages import SystemMessage, HumanMessage
+from .base import get_llm, stream_llm, parse_json, make_log, broadcast_agent_status
 from ..graph.state import ScrumState
 
-SYSTEM_PROMPT = """You are a Technical Documentation Engineer on an AI Scrum team.
+SYSTEM = "You are a Technical Writer. Return ONLY valid JSON."
 
-Your responsibilities:
-1. Create comprehensive API documentation (endpoints, request/response formats, auth)
-2. Write clear sprint release notes highlighting new features
-3. Document the architecture and system design decisions
-4. Create a developer onboarding guide
-5. Ensure documentation is clear enough for both technical and non-technical readers
+TEMPLATE = """Project: {name} — Sprint {sprint} Documentation
 
-Use the create_documentation tool for EACH document type.
-Create at least 2 documents:
-1. API & Technical Documentation
-2. Sprint Release Notes
+Tech Stack: {stack}
+API Endpoints: {endpoints}
+Features Delivered: {features}
+Tests: {tests} passed
 
-Make documentation professional, complete, and genuinely useful.
-Include examples, code snippets, and clear explanations."""
+Return JSON:
+{{
+  "api_documentation": "# API Reference\\n\\n## Authentication\\n...",
+  "release_notes": "# v1.{sprint}.0 Release Notes\\n\\n## New Features\\n- ...",
+  "architecture_summary": "## Architecture Overview\\n\\n...",
+  "onboarding_guide": "## Getting Started\\n\\n..."
+}}
 
-DOC_TOOLS = [create_documentation]
+Write real markdown content in each field. Be thorough but concise."""
 
 
-def documentation_node(state: ScrumState) -> dict:
-    llm = get_llm(DOC_TOOLS)
+async def documentation_node(state: ScrumState) -> dict:
+    sid = state.get("session_id", "")
     logs = list(state.get("agent_logs", []))
+
+    await broadcast_agent_status(sid, "Doc", "Doc Engineer", "ACTIVE",
+                                 "Writing API docs, release notes and onboarding guide...")
     logs.append(make_log("Doc", "Documentation", "DOC_START",
-                         "Creating comprehensive project documentation..."))
+                         "Writing API docs, release notes and onboarding guide..."))
 
-    architecture = state.get("architecture", {})
-    sprint_backlog = state.get("sprint_backlog", [])
-    code_artifacts = state.get("code_artifacts", [])
-    test_results = state.get("test_results", [])
+    arch = state.get("architecture") or {}
+    stories = [s["title"] for s in state.get("sprint_backlog", []) if s.get("status") == "DONE"]
+    tests = state.get("test_results", [])
+    passed = sum(1 for t in tests if t.get("status") == "PASS")
+    endpoints = json.dumps([f"{e.get('method')} {e.get('path')}"
+                            for e in arch.get("api_endpoints", [])[:6]])
 
-    arch_info = json.dumps({
-        "tech_stack": architecture.get("tech_stack", []),
-        "api_endpoints": architecture.get("api_endpoints", []),
-        "database_schema": architecture.get("database_schema", []),
-        "system_overview": architecture.get("system_overview", "")
-    }, indent=2) if architecture else "No architecture documented"
-
-    stories_completed = [s["title"] for s in sprint_backlog if s.get("status") == "DONE"]
-    test_summary = f"Tests: {sum(1 for t in test_results if t.get('status') == 'PASS')}/{len(test_results)} passed"
-
+    llm = get_llm("gpt-4o-mini", max_tokens=2500)
     messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=f"""
-Project: {state.get('project_name', 'AI Project')}
-Sprint {state.get('current_sprint', 1)} - Documentation Phase
-
-Architecture:
-{arch_info}
-
-Completed Features:
-{json.dumps(stories_completed, indent=2)}
-
-Code Files Created:
-{json.dumps([c.get('filename') for c in code_artifacts], indent=2)}
-
-QA Summary: {test_summary}
-
-Please create:
-1. API & Technical Documentation using create_documentation tool (doc_type: "API_DOCS")
-2. Sprint Release Notes using create_documentation tool (doc_type: "RELEASE_NOTES")
-
-Make them professional, complete, and ready for distribution to stakeholders.
-""")
+        SystemMessage(content=SYSTEM),
+        HumanMessage(content=TEMPLATE.format(
+            name=state.get("project_name", "Project"),
+            sprint=state.get("current_sprint", 1),
+            stack=", ".join(arch.get("tech_stack", ["Python", "React"])),
+            endpoints=endpoints,
+            features=json.dumps(stories),
+            tests=passed
+        ))
     ]
 
-    response = llm.invoke(messages)
-    messages.append(response)
+    content = await stream_llm(llm, messages, sid, "Doc")
+    data = parse_json(content)
 
-    all_docs = []
-    release_notes = ""
+    sections = ["api_documentation", "release_notes", "architecture_summary", "onboarding_guide"]
+    full_doc = "\n\n---\n\n".join(data.get(s, "") for s in sections if data.get(s))
 
-    if hasattr(response, 'tool_calls') and response.tool_calls:
-        for tool_call in response.tool_calls:
-            if tool_call["name"] == "create_documentation":
-                result = create_documentation.invoke(tool_call["args"])
-                result_data = json.loads(result)
-                all_docs.append(result_data)
-
-                doc_type = result_data.get("doc_type", "")
-                if "RELEASE" in doc_type.upper():
-                    release_notes = result_data.get("content", "")
-
-                logs.append(make_log("Doc", "Documentation", "DOC_CREATED",
-                                     f"Created: {result_data.get('title', doc_type)}",
-                                     {"doc_type": doc_type, "title": result_data.get("title")}))
-                messages.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
-
-        final_response = llm.invoke(messages)
-        messages.append(final_response)
-
-    full_documentation = "\n\n---\n\n".join([
-        f"# {d.get('title', 'Document')}\n\n{d.get('content', '')}"
-        for d in all_docs
-    ]) if all_docs else f"# {state.get('project_name', 'Project')} Documentation\n\nDocumentation for Sprint {state.get('current_sprint', 1)}."
+    for section in sections:
+        if data.get(section):
+            logs.append(make_log("Doc", "Documentation", "DOC_CREATED",
+                                 f"📄 {section.replace('_', ' ').title()} written"))
 
     logs.append(make_log("Doc", "Documentation", "DOC_COMPLETE",
-                         f"Created {len(all_docs)} documentation artifacts. Project docs are ready!",
-                         {"docs_count": len(all_docs)}))
+                         "✅ All documentation created and ready for stakeholders."))
+
+    await broadcast_agent_status(sid, "Doc", "Doc Engineer", "DONE",
+                                 "✅ API docs, release notes & onboarding guide complete")
 
     return {
-        "documentation": full_documentation,
-        "release_notes": release_notes,
+        "documentation": full_doc,
+        "release_notes": data.get("release_notes", ""),
         "current_agent": "scrum_master_review",
         "agent_logs": logs,
         "completed_agents": list(state.get("completed_agents", [])) + ["documentation"],
-        "messages": messages
+        "messages": [HumanMessage(content="Documentation complete.")]
     }

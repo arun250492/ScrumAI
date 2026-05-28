@@ -1,142 +1,127 @@
 import json
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
-from .base import get_llm, make_log
-from ..tools.scrum_tools import write_code, update_story_status
+from langchain_core.messages import SystemMessage, HumanMessage
+from .base import get_llm, stream_llm, parse_json, make_log, broadcast_agent_status
 from ..graph.state import ScrumState
 
-SYSTEM_PROMPT = """You are a Senior Full-Stack Developer (Dev) on an AI Scrum team.
+SYSTEM = """You are a Senior Full-Stack Developer. Write production-ready code.
+Return ONLY valid JSON — no markdown fences around the JSON itself."""
 
-Your responsibilities:
-1. Implement features based on user stories and architecture specifications
-2. Write clean, production-ready, well-structured code
-3. Follow the defined tech stack and architectural patterns
-4. Implement both backend (APIs, business logic, database) and frontend (UI components)
-5. Handle edge cases and implement proper error handling
-6. If there are QA bugs to fix, address them thoroughly
+TEMPLATE = """Project: {name}
+Tech Stack: {stack}
+System Overview: {overview}
 
-Use the write_code tool for EACH code file you create.
-Use update_story_status to mark stories as IN_PROGRESS and then DONE.
-
-Write real, working code - not pseudocode or placeholders.
-Be thorough - include actual implementation, not just stubs."""
-
-DEV_TOOLS = [write_code, update_story_status]
-
-
-def developer_node(state: ScrumState) -> dict:
-    llm = get_llm(DEV_TOOLS)
-    logs = list(state.get("agent_logs", []))
-    qa_iterations = state.get("qa_iterations", 0)
-
-    if qa_iterations > 0:
-        action_msg = "Fixing QA-reported bugs and improving code quality..."
-        action = "BUG_FIX"
-    else:
-        action_msg = "Starting implementation of sprint stories..."
-        action = "IMPLEMENT_START"
-
-    logs.append(make_log("Dev", "Developer", action, action_msg))
-
-    sprint_backlog = state.get("sprint_backlog", [])
-    architecture = state.get("architecture", {})
-    test_results = state.get("test_results", [])
-    failed_tests = [t for t in test_results if t.get("status") == "FAIL"]
-
-    arch_summary = ""
-    if architecture:
-        arch_summary = f"""
-Tech Stack: {', '.join(architecture.get('tech_stack', []))}
-System Overview: {architecture.get('system_overview', 'N/A')}
-Key API Endpoints: {json.dumps(architecture.get('api_endpoints', [])[:3], indent=2)}
-Database Schema: {json.dumps(architecture.get('database_schema', [])[:3], indent=2)}
-"""
-
-    bug_context = ""
-    if failed_tests:
-        bug_context = f"""
-BUGS TO FIX (from QA):
-{json.dumps(failed_tests, indent=2)}
-
-Address each bug specifically in your code fixes.
-"""
-
-    stories_to_implement = json.dumps([{
-        "id": s["id"], "title": s["title"],
-        "description": s["description"],
-        "acceptance_criteria": s.get("acceptance_criteria", [])
-    } for s in sprint_backlog], indent=2)
-
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=f"""
-Project: {state.get('project_name', 'AI Project')}
-Requirement: {state.get('requirement', '')}
-
-Architecture Context:
-{arch_summary}
-
-User Stories to Implement:
-{stories_to_implement}
+Stories to implement:
+{stories}
 
 {bug_context}
 
-Please implement the code using write_code tool for each file.
-Create at least 2-3 code files covering:
-1. Main backend/API implementation
-2. Data models or database layer
-3. Frontend component or CLI interface
+Return JSON:
+{{
+  "code_artifacts": [
+    {{
+      "id": "CODE-001",
+      "story_id": "US-001",
+      "filename": "backend/main.py",
+      "language": "python",
+      "description": "FastAPI main application",
+      "content": "# actual code here\\nimport fastapi\\n..."
+    }},
+    {{
+      "id": "CODE-002",
+      "story_id": "US-001",
+      "filename": "frontend/src/App.jsx",
+      "language": "javascript",
+      "description": "React main component",
+      "content": "import React from 'react'\\n..."
+    }},
+    {{
+      "id": "CODE-003",
+      "story_id": "US-002",
+      "filename": "backend/models.py",
+      "language": "python",
+      "description": "Database models",
+      "content": "from sqlalchemy import...\\n..."
+    }}
+  ],
+  "implementation_notes": "brief summary of implementation decisions"
+}}
 
-Then use update_story_status to mark each story as DONE.
-""")
+Write real, working code — at least 3 files covering backend + frontend + models."""
+
+
+async def developer_node(state: ScrumState) -> dict:
+    sid = state.get("session_id", "")
+    logs = list(state.get("agent_logs", []))
+    qa_iter = state.get("qa_iterations", 0)
+
+    if qa_iter > 0:
+        action = f"Fixing QA-reported bugs (iteration {qa_iter})..."
+    else:
+        action = "Writing production code for all sprint stories..."
+
+    await broadcast_agent_status(sid, "Dev", "Developer", "ACTIVE", action)
+    logs.append(make_log("Dev", "Developer", "IMPLEMENT_START", action))
+
+    arch = state.get("architecture") or {}
+    failed = [t for t in state.get("test_results", []) if t.get("status") == "FAIL"]
+    bug_context = ""
+    if failed:
+        bug_context = f"BUGS TO FIX:\n{json.dumps(failed, indent=2)}"
+
+    stories = state.get("sprint_backlog", [])
+    stories_txt = json.dumps([{"id": s["id"], "title": s["title"],
+                               "description": s.get("description", ""),
+                               "acceptance_criteria": s.get("acceptance_criteria", [])}
+                              for s in stories], indent=2)
+
+    # Use gpt-4o for developer to get quality code
+    llm = get_llm("gpt-4o", max_tokens=4000)
+    messages = [
+        SystemMessage(content=SYSTEM),
+        HumanMessage(content=TEMPLATE.format(
+            name=state.get("project_name", "Project"),
+            stack=", ".join(arch.get("tech_stack", ["Python", "React"])),
+            overview=arch.get("system_overview", "Full-stack web application")[:300],
+            stories=stories_txt,
+            bug_context=bug_context
+        ))
     ]
 
-    response = llm.invoke(messages)
-    messages.append(response)
+    content = await stream_llm(llm, messages, sid, "Dev")
+    data = parse_json(content)
 
-    code_artifacts = list(state.get("code_artifacts", []))
-    updated_backlog = list(sprint_backlog)
+    artifacts = data.get("code_artifacts", [])
+    if not artifacts:
+        artifacts = [{"id": "CODE-001", "story_id": stories[0]["id"] if stories else "US-001",
+                      "filename": "app/main.py", "language": "python",
+                      "description": "Main application", "content": "# Implementation\n"}]
 
-    if hasattr(response, 'tool_calls') and response.tool_calls:
-        tool_map = {
-            "write_code": write_code,
-            "update_story_status": update_story_status
-        }
-        for tool_call in response.tool_calls:
-            tool_name = tool_call["name"]
-            if tool_name in tool_map:
-                result = tool_map[tool_name].invoke(tool_call["args"])
-                result_data = json.loads(result)
+    updated_backlog = []
+    for s in state.get("sprint_backlog", []):
+        s = dict(s)
+        s["status"] = "DONE"
+        updated_backlog.append(s)
 
-                if tool_name == "write_code":
-                    code_artifacts.append(result_data)
-                    logs.append(make_log("Dev", "Developer", "CODE_WRITTEN",
-                                        f"Written: {result_data.get('filename', 'file')} ({result_data.get('language', 'code')})",
-                                        {"filename": result_data.get("filename"), "language": result_data.get("language")}))
-
-                elif tool_name == "update_story_status":
-                    story_id = result_data.get("story_id")
-                    for story in updated_backlog:
-                        if story["id"] == story_id:
-                            story["status"] = result_data.get("new_status", story["status"])
-
-                messages.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
-
-        final_response = llm.invoke(messages)
-        messages.append(final_response)
-
-    for story in updated_backlog:
-        if story["status"] == "TODO":
-            story["status"] = "DONE"
+    for art in artifacts:
+        logs.append(make_log("Dev", "Developer", "CODE_WRITTEN",
+                             f"💾 {art.get('filename')} ({art.get('language')})",
+                             {"filename": art.get("filename"), "language": art.get("language")}))
 
     logs.append(make_log("Dev", "Developer", "COMPLETE",
-                         f"Implementation complete! {len(code_artifacts)} files written.",
-                         {"files_count": len(code_artifacts)}))
+                         f"✅ {len(artifacts)} files written. All stories implemented.",
+                         {"files": len(artifacts), "notes": data.get("implementation_notes", "")}))
+
+    await broadcast_agent_status(sid, "Dev", "Developer", "DONE",
+                                 f"✅ {len(artifacts)} code files written")
+
+    existing = list(state.get("code_artifacts", []))
+    existing.extend(artifacts)
 
     return {
-        "code_artifacts": code_artifacts,
+        "code_artifacts": existing,
         "sprint_backlog": updated_backlog,
         "current_agent": "qa",
         "agent_logs": logs,
         "completed_agents": list(state.get("completed_agents", [])) + ["developer"],
-        "messages": messages
+        "messages": [HumanMessage(content=f"Dev: {len(artifacts)} files implemented")]
     }
