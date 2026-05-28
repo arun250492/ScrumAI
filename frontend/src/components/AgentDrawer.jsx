@@ -903,59 +903,82 @@ const AGENT_META = {
 }
 
 export default function AgentDrawer({ agentShort, state, onClose, ArchitectureViewerComponent }) {
-  if (!agentShort) return null
-  const meta = AGENT_META[agentShort]
-  if (!meta) return null
-
-  const ViewComponent = agentShort === 'AA' ? ArchitectureViewerComponent : meta.View
+  const meta = agentShort ? AGENT_META[agentShort] : null
 
   return (
     <AnimatePresence>
-      <motion.div key="backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="fixed inset-0 z-40" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
-        onClick={onClose} />
+      {agentShort && meta && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            key="backdrop"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-40"
+            style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
+            onClick={onClose}
+          />
 
-      <motion.div key="drawer"
-        initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-        transition={{ type: 'spring', damping: 30, stiffness: 350 }}
-        className="fixed right-0 top-0 bottom-0 z-50 flex flex-col"
-        style={{ width: 'min(760px, 90vw)', background: '#0F0F16', borderLeft: '1px solid rgba(255,255,255,0.09)', boxShadow: '-24px 0 80px rgba(0,0,0,0.6)' }}>
-
-        {/* Header */}
-        <div className="flex items-center gap-4 px-5 py-4 border-b border-border flex-shrink-0"
-          style={{ background: '#111118' }}>
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
-            style={{ background: meta.color + '18', border: `1px solid ${meta.color}30`, color: meta.color }}>
-            {meta.icon}
-          </div>
-          <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-slate-100">{meta.label}</h2>
-            <p className="text-xs text-slate-500">{meta.sub}</p>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {state.completed_agents?.some(a => a.includes(agentShort.toLowerCase())) && (
-              <span className="badge badge-emerald text-2xs">Completed</span>
-            )}
-            <button onClick={onClose}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-200 hover:surface-3 transition-all text-sm">
-              ✕
-            </button>
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-hidden">
-          {agentShort === 'AA' ? (
-            <div className="p-5 h-full overflow-y-auto">
-              <ViewComponent architecture={state.architecture} />
+          {/* Drawer panel */}
+          <motion.div
+            key="drawer"
+            initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 32, stiffness: 360 }}
+            className="fixed right-0 top-0 bottom-0 z-50 flex flex-col"
+            style={{ width: 'min(780px, 92vw)', background: '#0F0F16', borderLeft: '1px solid rgba(255,255,255,0.09)', boxShadow: '-24px 0 80px rgba(0,0,0,0.65)' }}
+          >
+            {/* Header */}
+            <div className="flex items-center gap-4 px-5 py-4 border-b border-border flex-shrink-0"
+              style={{ background: '#111118' }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
+                style={{ background: meta.color + '18', border: `1px solid ${meta.color}35`, color: meta.color }}>
+                {meta.icon}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-base font-semibold text-slate-100">{meta.label}</h2>
+                <p className="text-xs text-slate-500">{meta.sub} · Agent Output</p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {state.completed_agents?.some(a => a.includes(agentShort.toLowerCase())) && (
+                  <span className="badge badge-emerald text-2xs">✓ Completed</span>
+                )}
+                <span className="badge badge-violet text-2xs">Sprint {state.current_sprint || 1}</span>
+                <button onClick={onClose}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-200 transition-all text-base ml-1"
+                  style={{ background: 'rgba(255,255,255,0.05)' }}>
+                  ✕
+                </button>
+              </div>
             </div>
-          ) : ViewComponent ? (
-            <ViewComponent state={state} />
-          ) : (
-            <div className="flex items-center justify-center h-full text-slate-600 text-sm">No output yet</div>
-          )}
-        </div>
-      </motion.div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-hidden">
+              {agentShort === 'AA' ? (
+                ArchitectureViewerComponent && state.architecture ? (
+                  <div className="p-5 h-full overflow-y-auto">
+                    <ArchitectureViewerComponent architecture={state.architecture} />
+                  </div>
+                ) : (
+                  <EmptyState icon="⬡" message="Architecture diagram will appear after the Architect agent runs" />
+                )
+              ) : meta.View ? (
+                <meta.View state={state} />
+              ) : (
+                <EmptyState icon={meta.icon} message="No output yet for this agent" />
+              )}
+            </div>
+          </motion.div>
+        </>
+      )}
     </AnimatePresence>
+  )
+}
+
+function EmptyState({ icon, message }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full text-center gap-3 p-8">
+      <div className="text-4xl opacity-40">{icon}</div>
+      <p className="text-sm text-slate-500 max-w-xs leading-relaxed">{message}</p>
+    </div>
   )
 }
